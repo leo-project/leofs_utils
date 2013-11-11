@@ -124,7 +124,7 @@ ARGV.length.times do |i|
   bucket = Array.new()
   w.write_line("*File Name   : #{ARGV[i]}")
   while l = r.read_line
-    /\[(.+)\]\t(.+)\/.+\t(.+)\t(\d{4})\-(\d{2})\-(\d{2}) (\d{2}):(\d{2}):(\d{1}).+\t.+/ =~ l
+    /\[([^\t]+)\]\t(?:[^\t]+\t)?([^\t]+)\/[^\t]+\t([^\t]+)\t(\d{4})\-(\d{2})\-(\d{2}) (\d{2}):(\d{2}):(\d{1}).+\t.+/ =~ l
     dt = $4 + $5 + $6 + $7 + $8 + $9
     bucket.length.times do |j|
       if bucket[j].bn == $2 then
