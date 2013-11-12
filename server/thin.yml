@@ -1,0 +1,10 @@
+---
+port: 7500
+# environment: development
+# address: 0.0.0.0
+# log: log/thin.log
+# pid: tmp/pids/thin.pid
+# servers: 1
+# daemonize: false
+# user: leofs
+# group: leofs
