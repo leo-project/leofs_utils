@@ -72,16 +72,16 @@ fi
 
 # Link
 if [ ! -L $LEO_DIR/leo_gateway/etc ]; then
-  ln -s $SHARED_DIR/leo_gateway/{etc,log,work} $LEO_DIR/leo_gateway
+  ln -s $SHARED_DIR/leo_gateway/etc $LEO_DIR/leo_gateway
 fi
 if [ ! -L $LEO_DIR/leo_manager_0/etc ]; then
-  ln -s $SHARED_DIR/leo_manager_0/{etc,log,work} $LEO_DIR/leo_manager_0
+  ln -s $SHARED_DIR/leo_manager_0/etc $LEO_DIR/leo_manager_0
 fi
 if [ ! -L $LEO_DIR/leo_manager_1/etc ]; then
-  ln -s $SHARED_DIR/leo_manager_1/{etc,log,work} $LEO_DIR/leo_manager_1
+  ln -s $SHARED_DIR/leo_manager_1/etc $LEO_DIR/leo_manager_1
 fi
 if [ ! -L $LEO_DIR/$LEO_VER/leo_storage/etc ]; then
-  ln -s $SHARED_DIR/leo_storage/{etc,log,work} $LEO_DIR/leo_storage
+  ln -s $SHARED_DIR/leo_storage/etc $LEO_DIR/leo_storage
 fi
 
 # Backup old data
