@@ -26,9 +26,6 @@
 %%-export([main/1]).
 
 -define(DEF_DEST_FILE_NAME, "app.conf").
--define(EQ, " = ").
--define(NL, "\r\n").
-
 -define(TYPE_STRING, 'string').
 -define(TYPE_ATOM,   'atom').
 -define(TYPE_BOOL,   'boolean').
@@ -360,6 +357,50 @@ convert(H, _, {snmp_agent, V}) -> gen_line(H, ?TYPE_STRING,"snmp_agent",V);
 %% ---------------------------
 %% STORAGE
 %% ---------------------------
+%% obj_containers
+convert(H, leo_storage, {obj_containers, V}) ->
+    %% [[{path,"/home/yosuke/dev/test/temp/leofs-work-dir/storage_0/avs"},{num_of_containers,8}]]
+    L1 = lists:map(fun(Props) ->
+                           case proplists:get_value(path, Props) of
+                               undefined -> [];
+                               V1 -> V1
+                           end
+                   end, V),
+    L2 = lists:map(fun(Props) ->
+                           case proplists:get_value(num_of_containers, Props) of
+                               undefined -> [];
+                               V2 ->
+                                   integer_to_list(V2)
+                           end
+                   end, V),
+    ok = gen_line(H, ?TYPE_ERL,"obj_containers.path", L1),
+    io:format(H, "~s = ", ["obj_containers.num_of_containers"]),
+    io:format(H, "~p", [L2]),
+    io:format(H, "~n", []),
+    ok;
+
+convert(H, leo_storage, {num_of_vnodes,   V}) -> gen_line(H, ?TYPE_NUMBER,"num_of_vnodes",V);
+convert(H, leo_storage, {num_of_mq_procs, V}) -> gen_line(H, ?TYPE_NUMBER,"mq.num_of_mq_procs",V);
+convert(H, leo_storage, {cns_num_of_batch_process_per_object,       V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recover_per_object.num_of_batch_process",V);
+convert(H, leo_storage, {cns_interval_per_object_min,               V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recover_per_object.interval_min",V);
+convert(H, leo_storage, {cns_interval_per_object_max,               V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recover_per_object.interval_max",V);
+convert(H, leo_storage, {cns_num_of_batch_process_sync_by_vnode_id, V}) -> gen_line(H, ?TYPE_NUMBER,"mq.sync_by_vnode_id.num_of_batch_process",V);
+convert(H, leo_storage, {cns_interval_sync_by_vnode_id_min,         V}) -> gen_line(H, ?TYPE_NUMBER,"mq.sync_by_vnode_id.interval_min",V);
+convert(H, leo_storage, {cns_interval_sync_by_vnode_id_max,         V}) -> gen_line(H, ?TYPE_NUMBER,"mq.sync_by_vnode_id.interval_max",V);
+convert(H, leo_storage, {cns_num_of_batch_process_rebalance,        V}) -> gen_line(H, ?TYPE_NUMBER,"mq.rebalance.num_of_batch_process",V);
+convert(H, leo_storage, {cns_interval_rebalance_min,                V}) -> gen_line(H, ?TYPE_NUMBER,"mq.rebalance.interval_min",V);
+convert(H, leo_storage, {cns_interval_rebalance_min,                V}) -> gen_line(H, ?TYPE_NUMBER,"mq.rebalance.interval_max",V);
+convert(H, leo_storage, {cns_num_of_batch_process_async_deletion,   V}) -> gen_line(H, ?TYPE_NUMBER,"mq.delete_object.num_of_batch_process",V);
+convert(H, leo_storage, {cns_interval_async_deletion_min,           V}) -> gen_line(H, ?TYPE_NUMBER,"mq.delete_object.interval_min",V);
+convert(H, leo_storage, {cns_interval_async_deletion_max,           V}) -> gen_line(H, ?TYPE_NUMBER,"mq.delete_object.interval_max",V);
+convert(H, leo_storage, {cns_num_of_batch_process_recovery_node,    V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recovery_node.num_of_batch_process",V);
+convert(H, leo_storage, {cns_interval_recovery_node_min,            V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recovery_node.interval_min",V);
+convert(H, leo_storage, {cns_interval_recovery_node_max,            V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recovery_node.interval_max",V);
+
+
+%% grp_level_2
+%% size_of_stacked_objs
+%% stacking_timeout
 
 %% ---------------------------
 %% MANAGER
