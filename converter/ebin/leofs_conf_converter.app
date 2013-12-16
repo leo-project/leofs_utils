@@ -1,7 +1,7 @@
 %% -*- mode: erlang;erlang-indent-level: 4;indent-tabs-mode: nil -*-
 %%======================================================================
 %%
-%% Whereis: LeoFS record existance check tool
+%% LeoFS  Configuration File Converter
 %%
 %% Copyright (c) 2012-2013 Rakuten, Inc.
 %%
@@ -20,13 +20,13 @@
 %% under the License.
 %%
 %%======================================================================
-{application, leofs_converter,
+{application, leofs_conf_converter,
   [
     {description, "LeoFS"},
     {vsn, "0.1.0"},
-    {id, "leofs_converter"},
+    {id, "leofs_conf_converter"},
     {registered,   []},
     {applications, [kernel, stdlib]},
-    {env, [{profile, false}]}
+    {env, []}
   ]
 }.

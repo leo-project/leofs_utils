@@ -48,7 +48,7 @@ main(Args) ->
         true ->
             rm("ebin/*.beam");
         false ->
-            rm("ebin/leofs_converter.beam")
+            rm("ebin/leofs_conf_converter.beam")
     end,
 
     %% Compile all src/*.erl to ebin
@@ -61,16 +61,16 @@ main(Args) ->
         up_to_date ->
             ok;
         error ->
-            io:format("Failed to compile leofs_converter files!\n"),
+            io:format("Failed to compile leofs_conf_converter files!\n"),
             halt(1)
     end,
 
     %% Make sure file:consult can parse the .app file
-    case file:consult("ebin/leofs_converter.app") of
+    case file:consult("ebin/leofs_conf_converter.app") of
         {ok, _} ->
             ok;
         {error, Reason} ->
-            io:format("Invalid syntax in ebin/leofs_converter.app: ~p\n", [Reason]),
+            io:format("Invalid syntax in ebin/leofs_conf_converter.app: ~p\n", [Reason]),
             halt(1)
     end,
 
@@ -91,10 +91,10 @@ run(["help"]) ->
 run(["info"|_]) ->
     help();
 run(["version"]) ->
-    ok = application:load(leofs_converter),
+    ok = application:load(leofs_conf_converter),
     version();
 run(RawArgs) ->
-    ok = application:load(leofs_converter),
+    ok = application:load(leofs_conf_converter),
     {Opts, _NonOptArgs}= parse_args(RawArgs),
     case proplists:get_value(help, Opts) of
         undefined -> void;
@@ -153,15 +153,15 @@ run(RawArgs) ->
 %% @doc Retrieve the version
 %% @private
 version() ->
-    {ok, Vsn} = application:get_key(leofs_converter, vsn),
-    io:format("leofs_converter ~s~n", [Vsn]).
+    {ok, Vsn} = application:get_key(leofs_conf_converter, vsn),
+    io:format("leofs_conf_converter ~s~n", [Vsn]).
 
 
 %% @doc Output the help
 %% @private
 help() ->
     OptSpecList = option_spec_list(),
-    getopt:usage(OptSpecList, "leofs_converter").
+    getopt:usage(OptSpecList, "leofs_conf_converter").
 
 
 %% @doc Parse arguments
