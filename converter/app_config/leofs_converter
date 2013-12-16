@@ -33,6 +33,7 @@
 -define(TYPE_NUMBER, 'integer').
 -define(TYPE_ERL,    'erl').
 
+
 main(Args) ->
     %% Get a string repr of build time
     Built = build_time(),
@@ -241,8 +242,17 @@ gen_conf(AppConfig, VmArgs, Dest) ->
             gen_line(Handler, ?TYPE_COMMENT, "##     from \"" ++ AppConfig ++ "\" and \"" ++ VmArgs ++ "\""),
             gen_line(Handler, ?TYPE_COMMENT, "##     to \"" ++ Dest ++ "\""),
             gen_line(Handler, ?TYPE_COMMENT, "##"),
+            gen_line(Handler, ?TYPE_COMMENT, "## ------------------------"),
+            gen_line(Handler, ?TYPE_COMMENT, "## For Applications"),
+            gen_line(Handler, ?TYPE_COMMENT, "## ------------------------"),
+            ok = gen_conf_1(Handler, AppConfig_1),
 
-            ok = gen_conf_1(Handler, AppConfig_1, VmArgs, Dest),
+            gen_line(Handler, ?TYPE_COMMENT, ""),
+            gen_line(Handler, ?TYPE_COMMENT, "## ------------------------"),
+            gen_line(Handler, ?TYPE_COMMENT, "## For Erlang-VM"),
+            gen_line(Handler, ?TYPE_COMMENT, "## ------------------------"),
+            ok = gen_conf_2(Handler, VmArgs),
+
             file:close(Handler);
         _ ->
             io:format("Invalid format~n"),
@@ -253,7 +263,7 @@ gen_conf(AppConfig, VmArgs, Dest) ->
 %% @private
 gen_line(H, ?TYPE_COMMENT, Row ) -> io:format(H, "~s~n",[Row]).
 gen_line(H, ?TYPE_ERL ,    K, V) -> io:format(H, "~s = ~p~n",[K, V]);
-gen_line(H, ?TYPE_STRING,  K, V) -> io:format(H, "~s = ~s~n",[K, V]);
+gen_line(H, ?TYPE_STRING,  K, V) -> io:format(H, "~s = ~s~n",[K, right_trim(left_trim(V))]);
 gen_line(H, ?TYPE_ATOM,    K, V) -> io:format(H, "~s = ~w~n",[K, V]);
 gen_line(H, ?TYPE_BOOL,    K, V) -> io:format(H, "~s = ~w~n",[K, V]);
 gen_line(H, ?TYPE_NUMBER , K, V) -> io:format(H, "~s = ~w~n",[K, V]);
@@ -434,20 +444,83 @@ convert(_,_,_) ->
     ok.
 
 
+%% @doc Convert app.config to LeoFS's ini-file for "cuttlefish"
 %% @private
-gen_conf_1(_Handler, [],_VmArgs,_Dest) ->
+gen_conf_1(_Handler, []) ->
     ok;
-gen_conf_1(Handler,[Conf|Rest], VmArgs, Dest) ->
+gen_conf_1(Handler,[Conf|Rest]) ->
     {K, L} = Conf,
-    ok = gen_conf_2(Handler, K, L),
-    gen_conf_1(Handler, Rest, VmArgs, Dest).
+    ok = gen_conf_1_1(Handler, K, L),
+    gen_conf_1(Handler, Rest).
 
-
-%% @private
-gen_conf_2(_,_K, []) ->
+gen_conf_1_1(_,_K, []) ->
     ok;
-gen_conf_2(Handler, K, [Element|Rest]) ->
+gen_conf_1_1(Handler, K, [Element|Rest]) ->
     %% io:format("K:~p~n, E:~p~n", [K,Element]),
     ok = convert(Handler, K, Element),
-    gen_conf_2(Handler, K, Rest).
+    gen_conf_1_1(Handler, K, Rest).
+
+%% @doc Convert vm.args to LeoFS's ini-file for "cuttlefish"
+%% @private
+gen_conf_2(Handler, VmArgs) ->
+    {ok, IoDevice} = file:open(VmArgs, [raw, binary, read]),
+    Ret = gen_conf_2(file:read_line(IoDevice), Handler, IoDevice),
+    ok = file:close(IoDevice),
+    Ret.
+
+gen_conf_2(eof,_Handler,_IODevice) ->
+    ok;
+gen_conf_2({error, Cause},_Handler,_IODevice) ->
+    {error, Cause};
+
+gen_conf_2({ok, << "-name", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "nodename", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, << "-setcookie", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "distributed_cookie", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, << "+K", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "erlang.kernel_poll", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, << "+A", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "erlang.asyc_threads", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, << "-env ERL_MAX_PORTS", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "erlang.max_ports", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, << "-config", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "snmp_conf", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, _}, Handler, IoDevice) ->
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice).
+
+
+%% @private
+-define(WHITE_SPACE,  " ").
+-define(EMPTY_STRING, "").
+-define(CR, "\r").
+-define(LF, "\n").
+
+left_trim(V) when is_binary(V) ->
+    re:replace(binary_to_list(V), ?WHITE_SPACE, ?EMPTY_STRING, [{return, list}]);
+left_trim(V) when is_list(V) ->
+    re:replace(V, ?WHITE_SPACE, ?EMPTY_STRING, [{return, list}]);
+left_trim(V) ->
+    V.
+
+%% @private
+right_trim(V) when is_binary(V) ->
+    re:replace(re:replace(binary_to_list(V), ?CR, ?EMPTY_STRING, [{return, list}]),
+               ?LF, ?EMPTY_STRING, [{return, list}]);
+right_trim(V) when is_list(V) ->
+    re:replace(re:replace(V, ?CR, ?EMPTY_STRING, [{return, list}]),
+               ?LF, ?EMPTY_STRING, [{return, list}]);
+right_trim(V) ->
+    V.
 
