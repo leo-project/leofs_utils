@@ -1,4 +1,4 @@
-#!/usr/local/erlang/current/bin/escript
+#!/usr/bin/env escript
 %% -*- mode: erlang;erlang-indent-level: 4;indent-tabs-mode: nil -*-
 %%======================================================================
 %%
@@ -396,11 +396,9 @@ convert(H, leo_storage, {cns_interval_async_deletion_max,           V}) -> gen_l
 convert(H, leo_storage, {cns_num_of_batch_process_recovery_node,    V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recovery_node.num_of_batch_process",V);
 convert(H, leo_storage, {cns_interval_recovery_node_min,            V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recovery_node.interval_min",V);
 convert(H, leo_storage, {cns_interval_recovery_node_max,            V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recovery_node.interval_max",V);
-
-
-%% grp_level_2
-%% size_of_stacked_objs
-%% stacking_timeout
+convert(H, leo_storage, {grp_level_2,          V}) -> gen_line(H, ?TYPE_STRING,"replication.rack_awareness.rack_id",V);
+convert(H, leo_storage, {size_of_stacked_objs, V}) -> gen_line(H, ?TYPE_NUMBER,"replication.recovery.size_of_stacked_objs",V);
+convert(H, leo_storage, {stacking_timeout,     V}) -> gen_line(H, ?TYPE_NUMBER,"replication.recovery.stacking_timeout",V);
 
 %% ---------------------------
 %% MANAGER
