@@ -26,6 +26,7 @@
 %%-export([main/1]).
 
 -define(DEF_DEST_FILE_NAME, "app.conf").
+-define(TYPE_COMMENT,'comment').
 -define(TYPE_STRING, 'string').
 -define(TYPE_ATOM,   'atom').
 -define(TYPE_BOOL,   'boolean').
@@ -233,6 +234,14 @@ gen_conf(AppConfig, VmArgs, Dest) ->
     case file:consult(AppConfig) of
         {ok, [AppConfig_1|_]} ->
             {ok, Handler} = file:open(Dest, write),
+
+            gen_line(Handler, ?TYPE_COMMENT, "## LeoFS Configuration"),
+            gen_line(Handler, ?TYPE_COMMENT, "##"),
+            gen_line(Handler, ?TYPE_COMMENT, "## Converted the configuration"),
+            gen_line(Handler, ?TYPE_COMMENT, "##     from \"" ++ AppConfig ++ "\" and \"" ++ VmArgs ++ "\""),
+            gen_line(Handler, ?TYPE_COMMENT, "##     to \"" ++ Dest ++ "\""),
+            gen_line(Handler, ?TYPE_COMMENT, "##"),
+
             ok = gen_conf_1(Handler, AppConfig_1, VmArgs, Dest),
             file:close(Handler);
         _ ->
@@ -242,6 +251,7 @@ gen_conf(AppConfig, VmArgs, Dest) ->
 
 
 %% @private
+gen_line(H, ?TYPE_COMMENT, Row ) -> io:format(H, "~s~n",[Row]).
 gen_line(H, ?TYPE_ERL ,    K, V) -> io:format(H, "~s = ~p~n",[K, V]);
 gen_line(H, ?TYPE_STRING,  K, V) -> io:format(H, "~s = ~s~n",[K, V]);
 gen_line(H, ?TYPE_ATOM,    K, V) -> io:format(H, "~s = ~w~n",[K, V]);
@@ -359,7 +369,6 @@ convert(H, _, {snmp_agent, V}) -> gen_line(H, ?TYPE_STRING,"snmp_agent",V);
 %% ---------------------------
 %% obj_containers
 convert(H, leo_storage, {obj_containers, V}) ->
-    %% [[{path,"/home/yosuke/dev/test/temp/leofs-work-dir/storage_0/avs"},{num_of_containers,8}]]
     L1 = lists:map(fun(Props) ->
                            case proplists:get_value(path, Props) of
                                undefined -> [];
@@ -403,6 +412,23 @@ convert(H, leo_storage, {stacking_timeout,     V}) -> gen_line(H, ?TYPE_NUMBER,"
 %% ---------------------------
 %% MANAGER
 %% ---------------------------
+convert(H, leo_manager, {manager_mode,   V}) -> gen_line(H, ?TYPE_ATOM,"manager.mode",V);
+
+convert(_H, leo_manager, {system, []}) -> ok;
+convert( H, leo_manager = E, {system = E1, [V|Rest]}) ->
+    ok = convert(H, E1, V),
+    ok = convert(H, E, {E1, Rest});
+convert(H, system, {n,       V}) -> gen_line(H, ?TYPE_NUMBER,"consistency.num_of_replicas",V);
+convert(H, system, {w,       V}) -> gen_line(H, ?TYPE_NUMBER,"consistency.write",V);
+convert(H, system, {r,       V}) -> gen_line(H, ?TYPE_NUMBER,"consistency.read",V);
+convert(H, system, {d,       V}) -> gen_line(H, ?TYPE_NUMBER,"consistency.delete",V);
+convert(H, system, {level_2, V}) -> gen_line(H, ?TYPE_NUMBER,"consistency.rack_aware_replicas",V);
+
+convert(H, leo_manager, {manager_partners, [V|_]}) -> gen_line(H, ?TYPE_STRING,"manager.partner",V);
+convert(H, leo_manager, {port_cui,             V}) -> gen_line(H, ?TYPE_NUMBER,"console.port.cui",V);
+convert(H, leo_manager, {port_json,            V}) -> gen_line(H, ?TYPE_NUMBER,"console.port.json",V);
+convert(H, leo_manager, {num_of_acceptors_cui, V}) -> gen_line(H, ?TYPE_NUMBER,"console.acceptors.cui",V);
+convert(H, leo_manager, {num_of_acceptors_json,V}) -> gen_line(H, ?TYPE_NUMBER,"console.acceptors.json",V);
 
 convert(_,_,_) ->
     ok.
