@@ -32,6 +32,7 @@ log = Logger.new($log_fn)
 
 prev_offset = 0
 count = 0
+err = 0
 
 if $save_fn == $stdout then
   op = $stdout
@@ -82,6 +83,7 @@ while ! io.eof? do
   end
 
   if (md5 == ret_md5) && (io.read(8) == "\0\0\0\0\0\0\0\0") then
+    err = 0
     prev_offset = io.pos
     if key + "\n" != "\n" then
       op.write(sprintf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second))
@@ -98,12 +100,18 @@ while ! io.eof? do
     log.info("#{prev_offset} #{key}")
   else
     io.seek(prev_offset, IO::SEEK_SET)
+    if err == 0 then
+      log.error("Error File: #{key}")
+    end
     while io.read(8) != "\0\0\0\0\0\0\0\0" do
       io.seek(prev_offset, IO::SEEK_SET)
       prev_offset += 1
     end
     prev_offset = io.pos
-    log.error("#{prev_offset} src_md5: #{md5} dst_md5: #{ret_md5}")
+    if err == 0 then
+      log.error("#{prev_offset} src_md5: #{md5} dst_md5: #{ret_md5}")
+    end
+    err = 1
   end
 end
 
