@@ -92,6 +92,12 @@ SQL
     sql += "bucket = '#{bucket}'"
     @db.execute(sql)
   end
+
+  def bucket_object(bucket)
+    sql  = "SELECT count(*) FROM leofs_keys WHERE "
+    sql += "bucket = '#{bucket}'"
+    @db.get_first_value(sql)
+  end
 end
 
 class RegistLog
@@ -167,7 +173,8 @@ class AnalyzeLog
     b_list = d.bucket_list[0]
     b_list.length.times do |i|
       b_size = d.bucket_size(b_list[i])
-      puts "Bucket: #{b_list[i]} Size: #{b_size[0][0] / 1024 / 1024 / 1024}GB"
+      b_obj = d.bucket_object(b_list[i])
+      puts "Bucket: #{b_list[i]} Object: #{b_obj} Size: #{b_size[0][0] / 1024 / 1024 / 1024}GB"
     end
   end
 end
