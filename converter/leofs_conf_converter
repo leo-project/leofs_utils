@@ -1,0 +1,526 @@
+#!/usr/bin/env escript
+%% -*- mode: erlang;erlang-indent-level: 4;indent-tabs-mode: nil -*-
+%%======================================================================
+%%
+%% LeoFS
+%%
+%% Copyright (c) 2012-2013 Rakuten, Inc.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%%======================================================================
+%% ex: ft=erlang ts=4 sw=4 et
+%%-module(bootstrap).
+%%-export([main/1]).
+
+-define(DEF_DEST_FILE_NAME, "app.conf").
+-define(TYPE_COMMENT,'comment').
+-define(TYPE_STRING, 'string').
+-define(TYPE_ATOM,   'atom').
+-define(TYPE_BOOL,   'boolean').
+-define(TYPE_NUMBER, 'integer').
+-define(TYPE_ERL,    'erl').
+
+
+main(Args) ->
+    %% Get a string repr of build time
+    Built = build_time(),
+
+    %% Get a string repr of first matching VCS changeset
+    VcsInfo = vcs_info([{hg, ".hg", "hg identify -i", "hg status"},
+                        {git, ".git", "git describe --always --tags",
+                         "git status -s"}]),
+
+    %% Check for force=1 flag to force a rebuild
+    case lists:member("force=1", Args) of
+        true ->
+            rm("ebin/*.beam");
+        false ->
+            rm("ebin/leofs_conf_converter.beam")
+    end,
+
+    %% Compile all src/*.erl to ebin
+    OtpInfo = string:strip(erlang:system_info(otp_release), both, $\n),
+    case make:files(filelib:wildcard("src/*.erl"),
+                    [{outdir, "ebin"}, {i, "include"},
+                     {d, 'BUILD_TIME', Built},
+                     {d, 'VCS_INFO', VcsInfo},
+                     {d, 'OTP_INFO', OtpInfo}]) of
+        up_to_date ->
+            ok;
+        error ->
+            io:format("Failed to compile leofs_conf_converter files!\n"),
+            halt(1)
+    end,
+
+    %% Make sure file:consult can parse the .app file
+    case file:consult("ebin/leofs_conf_converter.app") of
+        {ok, _} ->
+            ok;
+        {error, Reason} ->
+            io:format("Invalid syntax in ebin/leofs_conf_converter.app: ~p\n", [Reason]),
+            halt(1)
+    end,
+
+    %% Add ebin/ to our path
+    true = code:add_path("ebin"),
+
+    %% Execute
+    run(Args),
+    ok.
+
+
+%% @doc Parse arguments
+%% @private
+run([]) ->
+    help();
+run(["help"]) ->
+    help();
+run(["info"|_]) ->
+    help();
+run(["version"]) ->
+    ok = application:load(leofs_conf_converter),
+    version();
+run(RawArgs) ->
+    ok = application:load(leofs_conf_converter),
+    {Opts, _NonOptArgs}= parse_args(RawArgs),
+    case proplists:get_value(help, Opts) of
+        undefined -> void;
+        _ ->
+            help(),
+            halt(0)
+    end,
+    case proplists:get_value(version, Opts) of
+        undefined -> void;
+        _ ->
+            version(),
+            halt(0)
+    end,
+
+    %% Check whether exists files or not
+    AppConfig =
+        case proplists:get_value(app_config, Opts) of
+            undefined ->
+                io:format("'-a' parameter not found~n"),
+                halt(0);
+            Val_1 ->
+                case filelib:is_file(Val_1) of
+                    true  -> Val_1;
+                    false ->
+                        io:format(Val_1 ++ " not found~n"),
+                        halt(0)
+                end
+        end,
+    VmArgs =
+        case proplists:get_value(vm_args, Opts) of
+            undefined ->
+                io:format("'-e' parameter not found~n"),
+                halt(0);
+            Val_2 ->
+                case filelib:is_file(Val_2) of
+                    true  -> Val_2;
+                    false ->
+                        io:format(Val_2 ++ " not found~n"),
+                        halt(0)
+                end
+        end,
+
+    Dest = case proplists:get_value(dest, Opts) of
+               undefined ->
+                   ?DEF_DEST_FILE_NAME;
+               Val_3 ->
+                   Val_3
+           end,
+
+    %% Execute to parse 'app.config' and 'vm.args',
+    %% then generate a file
+    gen_conf(AppConfig, VmArgs, Dest),
+    ok.
+
+
+%% @doc Retrieve the version
+%% @private
+version() ->
+    {ok, Vsn} = application:get_key(leofs_conf_converter, vsn),
+    io:format("leofs_conf_converter ~s~n", [Vsn]).
+
+
+%% @doc Output the help
+%% @private
+help() ->
+    OptSpecList = option_spec_list(),
+    getopt:usage(OptSpecList, "leofs_conf_converter").
+
+
+%% @doc Parse arguments
+%% @private
+parse_args(RawArgs) ->
+    OptSpecList = option_spec_list(),
+    case getopt:parse(OptSpecList, RawArgs) of
+        {ok, Args} ->
+            Args;
+        {error, {_Reason, _Data}} ->
+            help(),
+            halt(1)
+    end.
+
+
+%% @doc Option spec list
+%% @private
+option_spec_list() ->
+    [
+     %% {Name, ShortOpt, LongOpt, ArgSpec, HelpMsg}
+     {help,        $h, "help",        undefined, "Show the program options"},
+     {app_config,  $a, "app_config",  string,    "Individual 'app config'"},
+     {vm_args,     $e, "vm_args",     string,    "Individual 'vm.args'"},
+     {dest,        $d, "dest_file",   string,    "The file name to write"},
+     {version,     $v, "version",     undefined, "Show version information"}
+    ].
+
+
+%% @doc Retrieve build time
+%% @private
+build_time() ->
+    {{Y, M, D}, {H, Min, S}} = calendar:now_to_universal_time(now()),
+    lists:flatten(io_lib:format("~4..0w~2..0w~2..0w_~2..0w~2..0w~2..0w",
+                                [Y, M, D, H, Min, S])).
+
+%% @doc
+%% @private
+vcs_info([]) ->
+    "No VCS info available.";
+vcs_info([{Id, Dir, VsnCmd, StatusCmd} | Rest]) ->
+    case filelib:is_dir(Dir) of
+        true ->
+            Vsn = string:strip(os:cmd(VsnCmd), both, $\n),
+            Status = case string:strip(os:cmd(StatusCmd), both, $\n) of
+                         [] ->
+                             "";
+                         _ ->
+                             "-dirty"
+                     end,
+            lists:concat([Id, " ", Vsn, Status]);
+        false ->
+            vcs_info(Rest)
+    end.
+
+
+%% @doc Remove a file
+%% @private
+rm(Path) ->
+    NativePath = filename:nativename(Path),
+    Cmd = case os:type() of
+              {unix,_} -> "rm -f ";
+              {win32,_} -> "del /q "
+          end,
+    [] = os:cmd(Cmd ++ NativePath),
+    ok.
+
+
+%% @doc Generate a conf file
+%% @private
+gen_conf(AppConfig, VmArgs, Dest) ->
+    case file:consult(AppConfig) of
+        {ok, [AppConfig_1|_]} ->
+            {ok, Handler} = file:open(Dest, write),
+
+            gen_line(Handler, ?TYPE_COMMENT, "## LeoFS Configuration"),
+            gen_line(Handler, ?TYPE_COMMENT, "##"),
+            gen_line(Handler, ?TYPE_COMMENT, "## Converted the configuration"),
+            gen_line(Handler, ?TYPE_COMMENT, "##     from \"" ++ AppConfig ++ "\" and \"" ++ VmArgs ++ "\""),
+            gen_line(Handler, ?TYPE_COMMENT, "##     to \"" ++ Dest ++ "\""),
+            gen_line(Handler, ?TYPE_COMMENT, "##"),
+            gen_line(Handler, ?TYPE_COMMENT, "## ------------------------"),
+            gen_line(Handler, ?TYPE_COMMENT, "## For Applications"),
+            gen_line(Handler, ?TYPE_COMMENT, "## ------------------------"),
+            ok = gen_conf_1(Handler, AppConfig_1),
+
+            gen_line(Handler, ?TYPE_COMMENT, ""),
+            gen_line(Handler, ?TYPE_COMMENT, "## ------------------------"),
+            gen_line(Handler, ?TYPE_COMMENT, "## For Erlang-VM"),
+            gen_line(Handler, ?TYPE_COMMENT, "## ------------------------"),
+            ok = gen_conf_2(Handler, VmArgs),
+
+            file:close(Handler);
+        _ ->
+            io:format("Invalid format~n"),
+            halt(0)
+    end.
+
+
+%% @private
+gen_line(H, ?TYPE_COMMENT, Row ) -> io:format(H, "~s~n",[Row]).
+gen_line(H, ?TYPE_ERL ,    K, V) -> io:format(H, "~s = ~p~n",[K, V]);
+gen_line(H, ?TYPE_STRING,  K, V) -> io:format(H, "~s = ~s~n",[K, right_trim(left_trim(V))]);
+gen_line(H, ?TYPE_ATOM,    K, V) -> io:format(H, "~s = ~w~n",[K, V]);
+gen_line(H, ?TYPE_BOOL,    K, V) -> io:format(H, "~s = ~w~n",[K, V]);
+gen_line(H, ?TYPE_NUMBER , K, V) -> io:format(H, "~s = ~w~n",[K, V]);
+gen_line(_,_,_,_) ->
+    ok.
+
+
+%% @doc
+%% @private
+%% ---------------------------
+%% COMMONS
+%% ---------------------------
+%% sasl:
+convert(H, sasl, {sasl_error_logger,    {_,V}}) -> gen_line(H, ?TYPE_STRING,"sasl.sasl_error_log",V);
+convert(H, sasl, {errlog_type,              V}) -> gen_line(H, ?TYPE_ATOM,  "sasl.errlog_type",V);
+convert(H, sasl, {error_logger_mf_dir,      V}) -> gen_line(H, ?TYPE_STRING,"sasl.error_logger_mf_dir",V);
+convert(H, sasl, {error_logger_mf_maxbytes, V}) -> gen_line(H, ?TYPE_NUMBER,"sasl.error_logger_mf_maxbytes",V);
+convert(H, sasl, {error_logger_mf_maxfiles, V}) -> gen_line(H, ?TYPE_NUMBER,"sasl.error_logger_mf_maxfiles",V);
+
+%% managers:
+convert(H,_E, {managers, V}) ->
+    L = lists:map(fun(X) when is_list(X) ->
+                          list_to_atom(X);
+                     (X) -> X
+                  end, V),
+    gen_line(H, ?TYPE_ERL, "managers", L);
+
+%% ---------------------------
+%% GATEWAY
+%% ---------------------------
+%% leo_gateway.http:
+convert(_H, leo_gateway, {http, []}) -> ok;
+convert( H, leo_gateway = E, {http = E1, [V|Rest]}) ->
+    ok = convert(H, E1, V),
+    ok = convert(H, E, {E1, Rest});
+convert(H, http, {handler, V})           -> gen_line(H, ?TYPE_NUMBER,"http.handler",V);
+convert(H, http, {port, V})              -> gen_line(H, ?TYPE_NUMBER,"http.port",V);
+convert(H, http, {num_of_acceptors, V})  -> gen_line(H, ?TYPE_NUMBER,"http.num_of_acceptors",V);
+convert(H, http, {max_keepalive, V})     -> gen_line(H, ?TYPE_NUMBER,"http.max_keepalive",V);
+convert(H, http, {layer_of_dirs, {_,V}}) -> gen_line(H, ?TYPE_NUMBER,"http.layer_of_dirs",V);
+convert(H, http, {ssl_port, V})          -> gen_line(H, ?TYPE_NUMBER,"http.ssl_port",V);
+convert(H, http, {ssl_ssl_certfile, V})  -> gen_line(H, ?TYPE_NUMBER,"http.ssl_certfile",V);
+convert(H, http, {ssl_ssl_keyfile, V})   -> gen_line(H, ?TYPE_NUMBER,"http.ssl_keyfile",V);
+
+%% leo_gateway.bucket_prop_sync_interval
+convert(H, leo_gateway,
+        {bucket_prop_sync_interval, V})  -> gen_line(H, ?TYPE_NUMBER,"bucket_prop_sync_interval",V);
+
+%% leo_gateway.large_object
+convert(H, leo_gateway, {large_object,      []}) -> gen_line(H, ?TYPE_NUMBER,"large_object.reading_chunked_obj_len", 5242880);
+convert(H, leo_gateway = E, {large_object = E1, [V|Rest]}) ->
+    ok = convert(H, E1, V),
+    ok = convert(H, E, {E1, Rest});
+convert(H, large_object, {max_chunked_objs,  V}) -> gen_line(H, ?TYPE_NUMBER,"large_object.max_chunked_objs ",V);
+convert(H, large_object, {max_len_for_obj,   V}) -> gen_line(H, ?TYPE_NUMBER,"large_object.max_len_of_obj",V);
+convert(H, large_object, {chunked_obj_len,   V}) -> gen_line(H, ?TYPE_NUMBER,"large_object.chunked_obj_len",V);
+convert(H, large_object, {threshold_obj_len, V}) -> gen_line(H, ?TYPE_NUMBER,"large_object.threshold_of_chunk_len",V);
+
+%% leo_gateway.cache
+convert(_H, leo_gateway, {cache, []}) -> ok;
+convert( H, leo_gateway = E, {cache = E1, [V|Rest]}) ->
+    ok = convert(H, E1, V),
+    ok = convert(H, E, {E1, Rest});
+convert(H, cache, {http_cache,               V}) -> gen_line(H, ?TYPE_BOOL, "cache.http_cache",V);
+convert(H, cache, {cache_workers,            V}) -> gen_line(H, ?TYPE_NUMBER,"cache.cache_workers",V);
+convert(H, cache, {cache_ram_capacity,       V}) -> gen_line(H, ?TYPE_NUMBER,"cache.cache_ram_capacity",V);
+convert(H, cache, {cache_disc_capacity,      V}) -> gen_line(H, ?TYPE_NUMBER,"cache.cache_disc_capacity",V);
+convert(H, cache, {cache_disc_threshold_len, V}) -> gen_line(H, ?TYPE_NUMBER,"cache.cache_disc_threshold_len",V);
+convert(H, cache, {cache_disc_dir_data,      V}) -> gen_line(H, ?TYPE_STRING,"cache.cache_disc_dir_data",V);
+convert(H, cache, {cache_disc_dir_journal,   V}) -> gen_line(H, ?TYPE_STRING,"cache.cache_disc_dir_journal",V);
+convert(H, cache, {cache_expire,             V}) -> gen_line(H, ?TYPE_NUMBER,"cache.cache_expire",V);
+convert(H, cache, {cache_max_content_len,    V}) -> gen_line(H, ?TYPE_NUMBER,"cache.cache_max_content_len",V);
+convert(H, cache, {cachable_content_type,    V}) -> gen_line(H, ?TYPE_ERL,   "cache.cachable_content_type",V);
+convert(H, cache, {cachable_path_pattern,    V}) -> gen_line(H, ?TYPE_ERL,   "cache.cachable_path_pattern",V);
+
+%% leo_gateway.timeout
+convert(_H, leo_gateway, {timeout, []}) -> ok;
+convert( H, leo_gateway = E, {timeout = E1, [V|Rest]}) ->
+    ok = convert(H, E1, V),
+    ok = convert(H, E, {E1, Rest});
+convert(H, timeout, {level_1, V}) -> gen_line(H, ?TYPE_NUMBER,"timeout.level_1",V);
+convert(H, timeout, {level_2, V}) -> gen_line(H, ?TYPE_NUMBER,"timeout.level_2",V);
+convert(H, timeout, {level_3, V}) -> gen_line(H, ?TYPE_NUMBER,"timeout.level_3",V);
+convert(H, timeout, {level_4, V}) -> gen_line(H, ?TYPE_NUMBER,"timeout.level_4",V);
+convert(H, timeout, {level_5, V}) -> gen_line(H, ?TYPE_NUMBER,"timeout.level_5",V);
+
+
+%% ---------------------------
+%% LOG
+%% ---------------------------
+convert(H, _, {log_level,            V}) -> gen_line(H, ?TYPE_NUMBER,"log.log_level",V);
+convert(H, _, {is_enable_access_log, V}) -> gen_line(H, ?TYPE_BOOL,  "log.is_enable_access_log",V);
+convert(H, _, {log_dir,              V}) -> gen_line(H, ?TYPE_STRING,"log.erlang",V);
+convert(H, _, {log_appender,
+               [{file, [{path, V}]}]})   -> gen_line(H, ?TYPE_STRING,"log.app",V);
+convert(H, _, {log_dir_member,       V}) -> gen_line(H, ?TYPE_STRING,"log.member_dir",V);
+convert(H, _, {log_dir_ring,         V}) -> gen_line(H, ?TYPE_STRING,"log.ring_dir",V);
+
+convert(H, _, {is_enable_esearch,    V}) -> gen_line(H, ?TYPE_BOOL,  "log.is_enable_esearch",V);
+convert(H, _, {esearch_host,         V}) -> gen_line(H, ?TYPE_STRING,"log.esearch.host",V);
+convert(H, _, {esearch_port,         V}) -> gen_line(H, ?TYPE_NUMBER,"log.esearch.port",V);
+convert(H, _, {esearch_timeout,      V}) -> gen_line(H, ?TYPE_NUMBER,"log.esearch.timeout",V);
+convert(H, _, {esearch_bulk_duration,V}) -> gen_line(H, ?TYPE_NUMBER,"log.esearch.esearch_bulk_duration",V);
+
+%% ---------------------------
+%% Directories
+%% ---------------------------
+convert(H, _, {queue_dir,  V}) -> gen_line(H, ?TYPE_STRING,"queue_dir",V);
+convert(H, _, {snmp_agent, V}) -> gen_line(H, ?TYPE_STRING,"snmp_agent",V);
+
+%% ---------------------------
+%% STORAGE
+%% ---------------------------
+%% obj_containers
+convert(H, leo_storage, {obj_containers, V}) ->
+    L1 = lists:map(fun(Props) ->
+                           case proplists:get_value(path, Props) of
+                               undefined -> [];
+                               V1 -> V1
+                           end
+                   end, V),
+    L2 = lists:map(fun(Props) ->
+                           case proplists:get_value(num_of_containers, Props) of
+                               undefined -> [];
+                               V2 ->
+                                   integer_to_list(V2)
+                           end
+                   end, V),
+    ok = gen_line(H, ?TYPE_ERL,"obj_containers.path", L1),
+    io:format(H, "~s = ", ["obj_containers.num_of_containers"]),
+    io:format(H, "~p", [L2]),
+    io:format(H, "~n", []),
+    ok;
+
+convert(H, leo_storage, {num_of_vnodes,   V}) -> gen_line(H, ?TYPE_NUMBER,"num_of_vnodes",V);
+convert(H, leo_storage, {num_of_mq_procs, V}) -> gen_line(H, ?TYPE_NUMBER,"mq.num_of_mq_procs",V);
+convert(H, leo_storage, {cns_num_of_batch_process_per_object,       V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recover_per_object.num_of_batch_process",V);
+convert(H, leo_storage, {cns_interval_per_object_min,               V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recover_per_object.interval_min",V);
+convert(H, leo_storage, {cns_interval_per_object_max,               V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recover_per_object.interval_max",V);
+convert(H, leo_storage, {cns_num_of_batch_process_sync_by_vnode_id, V}) -> gen_line(H, ?TYPE_NUMBER,"mq.sync_by_vnode_id.num_of_batch_process",V);
+convert(H, leo_storage, {cns_interval_sync_by_vnode_id_min,         V}) -> gen_line(H, ?TYPE_NUMBER,"mq.sync_by_vnode_id.interval_min",V);
+convert(H, leo_storage, {cns_interval_sync_by_vnode_id_max,         V}) -> gen_line(H, ?TYPE_NUMBER,"mq.sync_by_vnode_id.interval_max",V);
+convert(H, leo_storage, {cns_num_of_batch_process_rebalance,        V}) -> gen_line(H, ?TYPE_NUMBER,"mq.rebalance.num_of_batch_process",V);
+convert(H, leo_storage, {cns_interval_rebalance_min,                V}) -> gen_line(H, ?TYPE_NUMBER,"mq.rebalance.interval_min",V);
+convert(H, leo_storage, {cns_interval_rebalance_min,                V}) -> gen_line(H, ?TYPE_NUMBER,"mq.rebalance.interval_max",V);
+convert(H, leo_storage, {cns_num_of_batch_process_async_deletion,   V}) -> gen_line(H, ?TYPE_NUMBER,"mq.delete_object.num_of_batch_process",V);
+convert(H, leo_storage, {cns_interval_async_deletion_min,           V}) -> gen_line(H, ?TYPE_NUMBER,"mq.delete_object.interval_min",V);
+convert(H, leo_storage, {cns_interval_async_deletion_max,           V}) -> gen_line(H, ?TYPE_NUMBER,"mq.delete_object.interval_max",V);
+convert(H, leo_storage, {cns_num_of_batch_process_recovery_node,    V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recovery_node.num_of_batch_process",V);
+convert(H, leo_storage, {cns_interval_recovery_node_min,            V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recovery_node.interval_min",V);
+convert(H, leo_storage, {cns_interval_recovery_node_max,            V}) -> gen_line(H, ?TYPE_NUMBER,"mq.recovery_node.interval_max",V);
+convert(H, leo_storage, {grp_level_2,          V}) -> gen_line(H, ?TYPE_STRING,"replication.rack_awareness.rack_id",V);
+convert(H, leo_storage, {size_of_stacked_objs, V}) -> gen_line(H, ?TYPE_NUMBER,"replication.recovery.size_of_stacked_objs",V);
+convert(H, leo_storage, {stacking_timeout,     V}) -> gen_line(H, ?TYPE_NUMBER,"replication.recovery.stacking_timeout",V);
+
+%% ---------------------------
+%% MANAGER
+%% ---------------------------
+convert(H, leo_manager, {manager_mode,   V}) -> gen_line(H, ?TYPE_ATOM,"manager.mode",V);
+
+convert(_H, leo_manager, {system, []}) -> ok;
+convert( H, leo_manager = E, {system = E1, [V|Rest]}) ->
+    ok = convert(H, E1, V),
+    ok = convert(H, E, {E1, Rest});
+convert(H, system, {n,       V}) -> gen_line(H, ?TYPE_NUMBER,"consistency.num_of_replicas",V);
+convert(H, system, {w,       V}) -> gen_line(H, ?TYPE_NUMBER,"consistency.write",V);
+convert(H, system, {r,       V}) -> gen_line(H, ?TYPE_NUMBER,"consistency.read",V);
+convert(H, system, {d,       V}) -> gen_line(H, ?TYPE_NUMBER,"consistency.delete",V);
+convert(H, system, {level_2, V}) -> gen_line(H, ?TYPE_NUMBER,"consistency.rack_aware_replicas",V);
+
+convert(H, leo_manager, {manager_partners, [V|_]}) -> gen_line(H, ?TYPE_STRING,"manager.partner",V);
+convert(H, leo_manager, {port_cui,             V}) -> gen_line(H, ?TYPE_NUMBER,"console.port.cui",V);
+convert(H, leo_manager, {port_json,            V}) -> gen_line(H, ?TYPE_NUMBER,"console.port.json",V);
+convert(H, leo_manager, {num_of_acceptors_cui, V}) -> gen_line(H, ?TYPE_NUMBER,"console.acceptors.cui",V);
+convert(H, leo_manager, {num_of_acceptors_json,V}) -> gen_line(H, ?TYPE_NUMBER,"console.acceptors.json",V);
+
+convert(_,_,_) ->
+    ok.
+
+
+%% @doc Convert app.config to LeoFS's ini-file for "cuttlefish"
+%% @private
+gen_conf_1(_Handler, []) ->
+    ok;
+gen_conf_1(Handler,[Conf|Rest]) ->
+    {K, L} = Conf,
+    ok = gen_conf_1_1(Handler, K, L),
+    gen_conf_1(Handler, Rest).
+
+gen_conf_1_1(_,_K, []) ->
+    ok;
+gen_conf_1_1(Handler, K, [Element|Rest]) ->
+    %% io:format("K:~p~n, E:~p~n", [K,Element]),
+    ok = convert(Handler, K, Element),
+    gen_conf_1_1(Handler, K, Rest).
+
+%% @doc Convert vm.args to LeoFS's ini-file for "cuttlefish"
+%% @private
+gen_conf_2(Handler, VmArgs) ->
+    {ok, IoDevice} = file:open(VmArgs, [raw, binary, read]),
+    Ret = gen_conf_2(file:read_line(IoDevice), Handler, IoDevice),
+    ok = file:close(IoDevice),
+    Ret.
+
+gen_conf_2(eof,_Handler,_IODevice) ->
+    ok;
+gen_conf_2({error, Cause},_Handler,_IODevice) ->
+    {error, Cause};
+
+gen_conf_2({ok, << "-name", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "nodename", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, << "-setcookie", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "distributed_cookie", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, << "+K", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "erlang.kernel_poll", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, << "+A", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "erlang.asyc_threads", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, << "-env ERL_MAX_PORTS", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "erlang.max_ports", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, << "-config", V/binary >>}, Handler, IoDevice) ->
+    gen_line(Handler, ?TYPE_STRING,  "snmp_conf", V),
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice);
+
+gen_conf_2({ok, _}, Handler, IoDevice) ->
+    gen_conf_2(file:read_line(IoDevice), Handler, IoDevice).
+
+
+%% @private
+-define(WHITE_SPACE,  " ").
+-define(EMPTY_STRING, "").
+-define(CR, "\r").
+-define(LF, "\n").
+
+left_trim(V) when is_binary(V) ->
+    re:replace(binary_to_list(V), ?WHITE_SPACE, ?EMPTY_STRING, [{return, list}]);
+left_trim(V) when is_list(V) ->
+    re:replace(V, ?WHITE_SPACE, ?EMPTY_STRING, [{return, list}]);
+left_trim(V) ->
+    V.
+
+%% @private
+right_trim(V) when is_binary(V) ->
+    re:replace(re:replace(binary_to_list(V), ?CR, ?EMPTY_STRING, [{return, list}]),
+               ?LF, ?EMPTY_STRING, [{return, list}]);
+right_trim(V) when is_list(V) ->
+    re:replace(re:replace(V, ?CR, ?EMPTY_STRING, [{return, list}]),
+               ?LF, ?EMPTY_STRING, [{return, list}]);
+right_trim(V) ->
+    V.
+
