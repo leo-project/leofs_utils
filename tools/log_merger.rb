@@ -5,22 +5,38 @@ require 'optparse'
 class ReadLog
   def initialize(fn)
     @f = open(fn)
+    @fn = fn
     @buff = ''
-    @s_date = ''
+    @method = ''
+    @bucket = ''
+    @path = ''
+    @no = ''
+    @cap = ''
+    @date = ''
+    @s_date = 0
+    @s_code = ''
+    @rows = 0
   end
 
   def read_line
     begin
+      clear_value
       l = @f.gets
-      result = devide_line1(l)
-      if result[0].nil? then
-        result = devide_line2(l, @f.gets)
+      @rows += 1
+      parse_line_normal(l)
+      if @method.nil? then
+        parse_line_pre1_multi(l, @f.gets)
+        @rows += 1
       end
-      @buff = "[#{result[0]}]\t#{result[1]}\t#{result[2]}\t#{result[3]}\t#{result[4]}\t#{result[5]}\t#{result[6]}\t#{result[7]}\n"
-      match_line(@buff)
-    rescue
+      unless @method.nil? then
+        @buff = "[#{@method}]\t#{@bucket}\t#{@path}\t#{@no}\t#{@cap}\t#{@date}\t#{@s_date}\t#{@s_code}\n"
+        @s_date
+      else
+        @s_date = 0
+      end
+    rescue => e
       unless @f.closed?
-        @f.close
+        close_file
       end
       @buff = nil
     end
@@ -34,27 +50,65 @@ class ReadLog
     @s_date
   end
 
-  def devide_line1(l)
+  def get_fn
+    @fn
+  end
+
+  def get_rows
+    @rows
+  end
+
+  def parse_line_normal(l)
     if /^\[(.+)\]\t(.+)\t(.+)\t(.+)\t(.+)\t(.+)\t(\d{16})\t(\d+).*/ =~ l then
-      return [$1, $2, $3, $4, $5, $6, $7, $8]
+      @method = $1
+      @bucket = $2
+      @path   = $3
+      @no     = $4
+      @cap    = $5
+      @date   = $6
+      @s_date = $7.to_i
+      @s_code = $8
     else
       /^\[(.+)\]\t(.+)\t(.+)\t(.+)\t(.+)\t(\d{16})\t(\d+).*/ =~ l
-      return [$1, $2, $3, "0", $4, $5, $6, $7]
+      @method = $1
+      @bucket = $2
+      @path   = $3
+      @no     = '0'
+      @cap    = $4
+      @date   = $5
+      @s_date = $6.to_i
+      @s_code = $7
     end
   end
 
-  def devide_line2(l, m)
+  def parse_line_pre1_multi(l, m)
     l.gsub!("\n", "\t")
     l += m
     /^\[(.+)\]\t(.+)\t(.+)\t(.+)\t(.+)\t(.+)\t(\d{16})\t(\d+).*/ =~ l
-    return [$1, $2, $3, $4, $5, $6, $7, $8]
+    @method = $1
+    @bucket = $2
+    @path   = $3
+    @no     = $4
+    @cap    = $5
+    @date   = $6
+    @s_date = $7.to_i
+    @s_code = $8
   end
 
-  def match_line(l)
-    if /^\[.+\]\t.+\t.+\t.+\t.+\t.+\t(\d{16})\t\d+.*/ =~ l then
-      @s_date = $1.to_i
-    else
-      @s_date = nil
+  def clear_value
+    @method = ''
+    @bucket = ''
+    @path = ''
+    @no = ''
+    @cap = ''
+    @date = ''
+    @s_date = 0
+    @s_code = ''
+  end
+
+  def close_file
+    unless @f.closed?
+      @f.close
     end
   end
 end
@@ -73,7 +127,7 @@ class WriteLog
   end
 
   def close_file
-    unless @f.closed?
+    unless @f.closed? then
       @f.close
     end
   end
@@ -96,7 +150,7 @@ if ARGV.length == 0 then
   exit
 end
 
-if File.exists?($save_fn) then
+if $save_fn != $stdout && File.exists?($save_fn) then
   puts "[ERROR] Output file is already exists."
   exit
 end
@@ -116,29 +170,38 @@ ARGV.length.times do |i|
 end
 
 begin
-  h.clear
-  t.clear
+  begin
+    h.clear
+    t.clear
+    ARGV.length.times do |i|
+      unless r[i].get_line.nil? then
+        t[i] = r[i].get_date
+        if t[i] == 0 then
+          raise "Parse error. Filename: #{r[i].get_fn} Line: #{r[i].get_rows - 1}"
+        end
+      end
+    end
+    if t.length > 0 then
+      h = t.sort_by{|f, d| d}
+      if /^\[(PUT|DELETE)\].*/ =~ r[h[0][0]].get_line
+        w.write_line(r[h[0][0]].get_line)
+        valid += 1
+      end
+      r[h[0][0]].read_line
+      rows += 1
+      if rows % 1000 == 0 then
+        print "."
+      end
+    end
+  end while t.length > 0
+  puts "\nTotal: #{rows} Valid: #{valid}"
+  puts "End  : " + Time.now.strftime("%Y-%m-%d %H:%M:%S")
+rescue => e
+  puts "[ERROR] #{e.to_s}"
+  exit
+ensure
+  w.close_file
   ARGV.length.times do |i|
-    unless r[i].get_line.nil? then
-      t[i] = r[i].get_date
-    end
+    r[i].close_file
   end
-  if t.length > 0 then
-    h = t.sort_by{|f, d| d}
-    if /^\[(PUT|DELETE)\].*/ =~ r[h[0][0]].get_line
-      w.write_line(r[h[0][0]].get_line)
-      valid += 1
-    end
-    r[h[0][0]].read_line
-    rows += 1
-    if rows % 1000 == 0 then
-      print "."
-    end
-  end
-end while t.length > 0
-
-w.close_file
-puts "\nTotal: #{rows} Valid: #{valid}"
-puts "End  : " + Time.now.strftime("%Y-%m-%d %H:%M:%S")
-
-exit
+end
