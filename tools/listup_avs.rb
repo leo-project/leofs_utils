@@ -117,9 +117,9 @@ t = Time.now
 $save_fn = $stdout
 $key_list_flg = false
 o = OptionParser.new
-o.banner = "Usage : #{__FILE__} [avs_file] [-o output_file] [-l true | false]"
+o.banner = "Usage : #{__FILE__} [avs_file] [-o output_file] [-l]"
 o.on('-o output_file', '[output file name]', '(default=STDOUT)') {|v| $save_fn = v }
-o.on('-l', '[key list]') {|v| $key_list_flg = true}
+o.on('-l', '[key list]') {$key_list_flg = true}
 begin
   o.parse!
 rescue
