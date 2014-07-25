@@ -73,36 +73,46 @@ class FileReader
       if c_num >= 1 || md5 == 281949768489412648962353822266799178366 then
         dsize = 0
       end
-
-      body = io.read(dsize)
-      ret_md5 = Digest::MD5.hexdigest(body).hex.to_i
-
-      if (md5 == ret_md5 || md5 == 281949768489412648962353822266799178366) && (io.read(8) == "\0\0\0\0\0\0\0\0") then
-        err = 0
-        prev_offset = io.pos
-        if $key_list_flg then
-          if key + "\n" != "\n" then
-            op.write_line(sprintf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second) + "\t#{del_str}\t#{prev_offset}\t#{dsize / 1024}KB")
-            key_arr = key.split("\n")
-            key_arr.length.times{|i|
-              op.write_line("\t#{key_arr[i]}")
-            }
-            op.write_line("\n")
-          else
-            op.write_line("[ERROR] Key is not exists. #{offset}\n")
-          end
+      begin
+        if dsize > 10485760 then
+          raise "The dsize is too large"
         end
-        count += 1
-      else
+        body = io.read(dsize)
+        ret_md5 = Digest::MD5.hexdigest(body).hex.to_i
+  
+        if (md5 == ret_md5 || md5 == 281949768489412648962353822266799178366) && (io.read(8) == "\0\0\0\0\0\0\0\0") then
+          if err == 1 then
+            op.write_line("[RECOVERD] offset: #{io.pos.to_s} count: #{count.to_s}\n")
+          end
+          err = 0
+          prev_offset = io.pos
+          if $key_list_flg then
+            if key + "\n" != "\n" then
+              op.write_line(sprintf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second) + "\t#{del_str}\t#{prev_offset}\t#{dsize / 1024}KB")
+              key_arr = key.split("\n")
+              key_arr.length.times{|i|
+                op.write_line("\t#{key_arr[i]}")
+              }
+              op.write_line("\n")
+            else
+              op.write_line("[ERROR] Key is not exists. #{offset}\n")
+            end
+          end
+          count += 1
+        else
+          raise "The data block is broken"
+        end
+      rescue
         if err == 0 then
-          op.write_line("[ERROR] offset: #{prev_offset.to_s(16)}\n")
+          p $!
+          op.write_line("[ERROR] offset: #{prev_offset.to_s} count: #{count.to_s}\n")
           err_count += 1
         end
-        begin
-          prev_offset += 1
-          io.seek(prev_offset, IO::SEEK_SET)
-        end until io.read(8) == "\0\0\0\0\0\0\0\0"
-        prev_offset = io.pos
+        if (prev_offset % 1000) == 0 then
+            puts "Now skipping error blocks Offset: #{prev_offset.to_s}\n"
+        end
+        prev_offset += 1
+        io.seek(prev_offset, IO::SEEK_SET)
         err = 1
       end
     end
