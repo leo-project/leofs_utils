@@ -82,7 +82,7 @@ class FileReader
   
         if (md5 == ret_md5 || md5 == 281949768489412648962353822266799178366) && (io.read(8) == "\0\0\0\0\0\0\0\0") then
           if err == 1 then
-            op.write_line("[RECOVERD] offset: #{io.pos.to_s} count: #{count.to_s}\n")
+            op.write_line("[RECOVERD] offset: #{prev_offset.to_s} count: #{count.to_s}\n")
           end
           err = 0
           prev_offset = io.pos
@@ -118,7 +118,7 @@ class FileReader
     end
     io.close
     op.close_file
-    puts "Total: #{count.to_s} Offset: #{prev_offset.to_s} Error: #{err_count}\n"
+    puts "Error: #{err_count}\n"
   end
 end
 
