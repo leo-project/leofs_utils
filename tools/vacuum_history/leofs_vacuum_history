@@ -136,6 +136,13 @@ exec(Manager, NumRecord) ->
     From = LastID - NumTotal + 1,
     %% calc the To position to be deleted
     To = LastID - NumRecord,
+    if From > To ->
+            io:format("[info]The number of records(~p) is less than the specified value(~p)~n", 
+                [NumTotal, NumRecord]),
+            halt(1);
+        true ->
+            void
+    end,
     
     io:format("[info]delete from:~p to:~p~n", [From, To]),
     
