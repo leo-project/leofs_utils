@@ -1,0 +1,265 @@
+#!/usr/bin/env escript
+%% -*- mode: erlang;erlang-indent-level: 4;indent-tabs-mode: nil -*-
+%%======================================================================
+%%
+%% LeoFS
+%%
+%% Copyright (c) 2012-2013 Rakuten, Inc.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%%======================================================================
+%% ex: ft=erlang ts=4 sw=4 et
+%%-module(bootstrap).
+%%-export([main/1]).
+
+-define(DEF_MANAGER_NAME, 'manager_0@127.0.0.1').
+-define(DEF_COOKIE, '401321b4').
+-define(DEF_NUM_OF_RECORD_TO_BE_KEPT, 200).
+
+main(Args) ->
+    %% Get a string repr of build time
+    Built = build_time(),
+
+    %% Get a string repr of first matching VCS changeset
+    VcsInfo = vcs_info([{hg, ".hg", "hg identify -i", "hg status"},
+                        {git, ".git", "git describe --always --tags",
+                         "git status -s"}]),
+
+    %% Check for force=1 flag to force a rebuild
+    case lists:member("force=1", Args) of
+        true ->
+            rm("ebin/*.beam");
+        false ->
+            rm("ebin/leofs_vacuum_history.beam")
+    end,
+
+    %% Compile all src/*.erl to ebin
+    OtpInfo = string:strip(erlang:system_info(otp_release), both, $\n),
+    case make:files(filelib:wildcard("src/*.erl"),
+                    [{outdir, "ebin"}, {i, "include"},
+                     {d, 'BUILD_TIME', Built},
+                     {d, 'VCS_INFO', VcsInfo},
+                     {d, 'OTP_INFO', OtpInfo}]) of
+        up_to_date ->
+            ok;
+        error ->
+            io:format("Failed to compile leofs_vacuum_history files!\n"),
+            halt(1)
+    end,
+
+    %% Make sure file:consult can parse the .app file
+    case file:consult("ebin/leofs_vacuum_history.app") of
+        {ok, _} ->
+            ok;
+        {error, Reason} ->
+            io:format("Invalid syntax in ebin/leofs_vacuum_history.app: ~p\n", [Reason]),
+            halt(1)
+    end,
+
+    %% Add ebin/ to our path
+    true = code:add_path("ebin"),
+
+    %% Execute
+    run(Args),
+    ok.
+
+
+%% @doc Parse arguments
+%% @private
+run([]) ->
+    help();
+run(["help"]) ->
+    help();
+run(["info"|_]) ->
+    help();
+run(["version"]) ->
+    ok = application:load(leofs_vacuum_history),
+    version();
+run(RawArgs) ->
+    ok = application:load(leofs_vacuum_history),
+    {Opts, _NonOptArgs}= parse_args(RawArgs),
+    case proplists:get_value(help, Opts) of
+        undefined -> void;
+        _ ->
+            help(),
+            halt(0)
+    end,
+    case proplists:get_value(version, Opts) of
+        undefined -> void;
+        _ ->
+            version(),
+            halt(0)
+    end,
+    Manager = case proplists:get_value(manager, Opts) of
+        undefined -> ?DEF_MANAGER_NAME;
+        Val -> 
+            list_to_atom(Val)
+    end,
+    Cookie = case proplists:get_value(cookie, Opts) of
+        undefined -> ?DEF_COOKIE;
+        Val2 -> 
+            list_to_atom(Val2)
+    end,
+    NumRecord = case proplists:get_value(record, Opts) of
+        undefined -> ?DEF_NUM_OF_RECORD_TO_BE_KEPT;
+        Val3 -> 
+            Val3
+    end,
+    %% try to connect with a manager node
+    Me = my_name(),
+    net_kernel:start([Me, longnames]),
+    erlang:set_cookie(Me, Cookie),
+    exec(Manager, NumRecord).
+
+exec(Manager, NumRecord) ->
+    %% get the last record
+    %% mnesia:dirty_last('leo_histories')
+    LastID = rpc_call(Manager, mnesia, dirty_last, ['leo_histories']), 
+    %% get the total number of record
+    %% mnesia:table_info('leo_histories', size)
+    NumTotal = rpc_call(Manager, mnesia, table_info, ['leo_histories', size]), 
+    
+    %% calc the From position to be deleted
+    From = LastID - NumTotal + 1,
+    %% calc the To position to be deleted
+    To = LastID - NumRecord,
+    
+    io:format("[info]delete from:~p to:~p~n", [From, To]),
+    
+    %% leo_mnesia:delete(F)
+    DelFun = fun() ->
+        [ mnesia:delete('leo_histories', ID, write) || ID <- lists:seq(From, To) ],
+        ok
+    end,
+    rpc_call(Manager, leo_mnesia, delete, [DelFun]),
+
+    %% get all histories
+    {ok, HistoryList} = rpc_call(Manager, leo_manager_mnesia, get_histories_all, []),
+    io:format("[info]old records:~p~n", [HistoryList]),
+
+    %% delete all histories
+    rpc_call(Manager, mnesia, clear_table, ['leo_histories']),
+
+    %% re-assign id from 0
+    erlang:put(id, 1),
+    ReAssignFun = fun({history, _ID, Command, Created}) ->
+        NewID = erlang:get(id),
+        erlang:put(id, NewID + 1),
+        {history, NewID, Command, Created}
+    end,
+    NewHistoryList = lists:map(ReAssignFun, HistoryList),
+    io:format("[info]new records:~p~n", [NewHistoryList]),
+
+    %% insert new histories
+    InsertFun = fun() ->
+        [ mnesia:write('leo_histories', History, write) || History <- NewHistoryList ],
+        ok
+    end,
+    rpc_call(Manager, leo_mnesia, write, [InsertFun]),
+
+    ok.
+
+rpc_call(Node, Module, Fun, Args) ->
+    case rpc:call(Node, Module, Fun, Args, 5000) of
+        {badrpc, Reason} ->
+            io:format("[error]~p mod:~p fun:~p args:~p~n", [Reason, Module, Fun, Args]),
+            halt(1);
+        Res ->
+            Res
+    end.
+
+%% @doc Retrieve the version
+%% @private
+version() ->
+    {ok, Vsn} = application:get_key(leofs_vacuum_history, vsn),
+    io:format("leofs_vacuum_history~s~n", [Vsn]).
+
+
+%% @doc Output the help
+%% @private
+help() ->
+    OptSpecList = option_spec_list(),
+    getopt:usage(OptSpecList, "leofs_vacuum_history").
+
+
+%% @doc Parse arguments
+%% @private
+parse_args(RawArgs) ->
+    OptSpecList = option_spec_list(),
+    case getopt:parse(OptSpecList, RawArgs) of
+        {ok, Args} ->
+            Args;
+        {error, {_Reason, _Data}} ->
+            help(),
+            halt(1)
+    end.
+
+
+%% @doc Option spec list
+%% @private
+option_spec_list() ->
+    [
+     %% {Name, ShortOpt, LongOpt, ArgSpec, HelpMsg}
+     {help,    $h, "help",        undefined, "Show the program options"},
+     {manager, $m, "manager",     string,    "Specify a manager node to connect"},
+     {cookie,  $c, "cookie",      string,    "Specify a cookie to connect"},
+     {record,  $r, "record",      integer,   "The number of record to be kept"},
+     {version, $v, "version",     undefined, "Show version information"}
+    ].
+
+%% @doc Retrieve build time
+%% @private
+build_time() ->
+    {{Y, M, D}, {H, Min, S}} = calendar:now_to_universal_time(now()),
+    lists:flatten(io_lib:format("~4..0w~2..0w~2..0w_~2..0w~2..0w~2..0w",
+                                [Y, M, D, H, Min, S])).
+
+%% @doc
+%% @private
+vcs_info([]) ->
+    "No VCS info available.";
+vcs_info([{Id, Dir, VsnCmd, StatusCmd} | Rest]) ->
+    case filelib:is_dir(Dir) of
+        true ->
+            Vsn = string:strip(os:cmd(VsnCmd), both, $\n),
+            Status = case string:strip(os:cmd(StatusCmd), both, $\n) of
+                         [] ->
+                             "";
+                         _ ->
+                             "-dirty"
+                     end,
+            lists:concat([Id, " ", Vsn, Status]);
+        false ->
+            vcs_info(Rest)
+    end.
+
+
+%% @doc Remove a file
+%% @private
+rm(Path) ->
+    NativePath = filename:nativename(Path),
+    Cmd = case os:type() of
+              {unix,_} -> "rm -f ";
+              {win32,_} -> "del /q "
+          end,
+    [] = os:cmd(Cmd ++ NativePath),
+    ok.
+
+%% @doc Assign my node name
+%% @private
+my_name() ->
+    Localhost = net_adm:localhost(),
+    list_to_atom("whereis" ++ "@" ++ Localhost).
