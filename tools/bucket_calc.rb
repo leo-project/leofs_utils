@@ -51,8 +51,8 @@ class DBUtils
     sql += "size, "
     sql += "unix_t"
     sql += ") VALUES ("
-    sql += "\'#{r[2]}\', "
-    sql += "\'#{r[1]}\', "
+    sql += "\"#{r[2]}\", "
+    sql += "\"#{r[1]}\", "
     sql += "#{r[4]}, "
     sql += "#{r[5]}"
     sql += ")"
@@ -64,7 +64,7 @@ class DBUtils
     sql += "size = #{r[4]}, "
     sql += "unix_t = #{r[5]} "
     sql += "WHERE "
-    sql += "path = \'#{r[2]}\'"
+    sql += "path = \"#{r[2]}\""
     @db.query(sql)
   end
 
@@ -73,13 +73,13 @@ class DBUtils
     sql += "size = size + #{r[4]}, "
     sql += "unix_t = #{r[5]} "
     sql += "WHERE "
-    sql += "path = \'#{r[2]}\'"
+    sql += "path = \"#{r[2]}\""
     @db.query(sql)
   end
 
   def delete_log(r)
     sql  = "DELETE FROM leofs_keys WHERE "
-    sql += "path = \'#{r[2]}\'"
+    sql += "path = \"#{r[2]}\""
     @db.query(sql)
   end
 
@@ -88,7 +88,7 @@ class DBUtils
     sql += "unix_t "
     sql += "FROM leofs_keys "
     sql += "WHERE "
-    sql += "path = \'#{r[2]}\'"
+    sql += "path = \"#{r[2]}\""
     @db.query(sql)
   end
 
