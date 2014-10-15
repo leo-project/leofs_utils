@@ -16,11 +16,12 @@ Usage
 
 ```
 $ ./leofs_b2l -h
-Usage: leofs_b2l [-h] [-b <bitcask_dir>] [-l <leveldb_dir>] [-v]
+Usage: leofs_b2l [-h] [-b <bitcask_dir>] [-l <leveldb_dir>] [-d <debug>] [-v]
 
   -h, --help            Show the program options
   -b, --bitcask_dir     Specify a bitcask directory to be converted
   -l, --leveldb_dir     Specify a leveldb directory to be outputed
+  -d, --debug           Enable debug outputs if specified
   -v, --version         Show version information
 
 ### example
