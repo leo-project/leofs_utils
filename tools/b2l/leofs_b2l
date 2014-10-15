@@ -166,7 +166,7 @@ option_spec_list() ->
      %% {Name, ShortOpt, LongOpt, ArgSpec, HelpMsg}
      {help,        $h, "help",    undefined,  "Show the program options"},
      {bitcask_dir, $b, "bitcask_dir", string, "Specify a bitcask directory to be converted"},
-     {leveldb_dir, $l, "leveldb_dir", string, "Specify a leveldb directory"},
+     {leveldb_dir, $l, "leveldb_dir", string, "Specify a leveldb directory to be outputed"},
      {version,     $v, "version", undefined,  "Show version information"}
     ].
 
