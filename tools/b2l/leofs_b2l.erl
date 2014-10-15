@@ -84,32 +84,52 @@ run(RawArgs) ->
         Val2 -> 
             Val2
     end,
-    io:format(user, "[debug]bitcask_dir:~p leveldb_dir:~p~n", [BitcaskDir, LevelDBDir]),
     BHandler = case bitcask:open(BitcaskDir, []) of
         {error, Cause} ->
-            io:format(user, "[error]bitcask open failed: cause:~p~n", [Cause]),
+            io:format(user, "[error]Bitcask open failed: cause:~p~n", [Cause]),
             exit(1);
         Handler ->
             Handler
     end,
     LHandler = case eleveldb:open(LevelDBDir, [{create_if_missing, true}]) of
         {error, Cause2} ->
-            io:format(user, "[error]leveldb open failed: cause:~p~n", [Cause2]),
+            io:format(user, "[error]LevelDB open failed: cause:~p~n", [Cause2]),
             exit(1);
         {ok, Handler2}->
             Handler2
     end,
-    io:format(user, "[debug]bitcask handler:~p leveldb handler:~p~n", [BHandler, LHandler]),
     try
         %% place business logic here
-        void
+        Fun = fun(K, V, Count) ->
+                %io:format(user, "[debug]iterate key:~p value:~p~n", [K, V]),
+                case eleveldb:put(LHandler, K, V, []) of
+                    ok ->
+                        void;
+                    {error, Cause3} ->
+                        io:format(user, "[error]Failed to put data into the leveldb cause:~p~n", [Cause3])
+                end,
+                Count + 1
+        end,
+        Total = bitcask:fold(BHandler, Fun, 0),
+        io:format(user, "[debug]# of records:~p~n", [Total]),
+        %% confirm records in leveldb
+        {ok, Itr} = eleveldb:iterator(LHandler, []),
+        fold_loop(eleveldb:iterator_move(Itr, <<>>), Itr)
     catch
-        Class:Error ->
-            io:format(user, "[error]an error occured: class:~p cause:~p~n", [Class, Error])
+        _Class:Error ->
+            io:format(user, "[error]Unexpected error occured: cause:~p~n", [Error])
     after
         eleveldb:close(LHandler),
         bitcask:close(BHandler)
     end,
+    ok.
+
+fold_loop({ok, K, V}, Itr) ->
+    Term = binary_to_term(V),
+    io:format(user, "[debug]iterate:leveldb key:~p value:~p~n", [K, Term]),
+    fold_loop(eleveldb:iterator_move(Itr, next), Itr);
+fold_loop({error, _Cause},_Itr) ->
+    %% Reach EOF
     ok.
 
 %% @doc Retrieve the version
