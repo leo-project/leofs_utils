@@ -7,6 +7,14 @@ Overview
 
 This tool enable LeoFS administrators to convert metadata used by LeoFS from bitcask to leveldb.
 
+Install dependent libraries
+---------------------------
+When starting for the first time, you need to issue the below command to install dependent libraries into your local file system
+
+```
+make
+```
+
 Usage
 --------
 
