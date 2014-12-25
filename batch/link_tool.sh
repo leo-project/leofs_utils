@@ -113,9 +113,9 @@ if [ "$1" == "-c" ]; then
       rm -f $DIR
     done
     echo "[INFO] Delete links of queue for gateway"
-    ls -l $SHARED_DIR/leo_storage/work/queue | grep 'drwx' | awk '{print $9}' | while read DIR
+    ls -l $SHARED_DIR/leo_gateway/work/queue | grep 'drwx' | awk '{print $9}' | while read DIR
     do
-      find $SHARED_DIR/leo_storage/work/queue/$DIR/* -type d | while read LINK_DIR
+      find $SHARED_DIR/leo_gateway/work/queue/$DIR/* -type d | while read LINK_DIR
       do
         echo $LINK_DIR | awk -F '/' '{a=$(NF); sub(/_.*/, "", a); for (i=1; i<NF; i++) {b=b$i"/"}; print "ln -s "$0" " b a}' | sh
       done

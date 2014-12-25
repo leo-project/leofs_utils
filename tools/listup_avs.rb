@@ -1,20 +1,135 @@
 #!/usr/bin/env ruby
 
-require 'logger'
-require 'optparse'
 require 'digest/md5'
+require 'optparse'
+
+class LogWriter
+  def initialize
+    if $save_fn == $stdout then
+      @f = $save_fn
+    else
+      @f = open($save_fn, "w")
+    end
+  end
+
+  def write_line(buff)
+    @f.write(buff)
+  end
+
+  def close_file
+    unless $save_fn == $stdout then
+      unless @f.closed? then
+        @f.close
+      end
+    end
+  end
+end
+
+class FileReader
+  def initialize(fn)
+    prev_offset = 0
+    count = 0
+    err_count = 0
+    err = 0
+
+    op = LogWriter.new
+    io = File.open(fn, "rb")
+
+    op.write_line("File: #{fn}\n")
+
+    # CHKSUM:128,KSIZE:16,BLEN_MSIZE:32,DSIZE:32,OFFSET:64,ADDRID:128,CLOCK:64,TIMESTAMP:42,DEL:1,BUF:437,CHUNK_SIZE:32,CHUNK_NUM:24,CHUNK_INDEX:24
+    # KEY/binary,DATA/binary
+    # PADDING:64
+    io.read(194) # Skip Header
+
+    while ! io.eof? do
+      header     = io.read(128)
+      md5        = header[  0, 16].unpack("H*")[0].hex.to_i  # CHKSUM:128
+      ksize      = header[ 16,  2].unpack("H*")[0].hex.to_i # KSIZE:16
+      dsize      = header[ 18,  4].unpack("H*")[0].hex.to_i # DSIZE:32
+      #blen_msize = header[ 22, 4].unpack("H*")[0].hex.to_i  # BLEN_MSIZE:32
+      offset     = header[ 26,  8].unpack("H*")[0].hex.to_i # OFFSET:64
+      #addrid     = header[ 34, 16].unpack("H*")[0].hex.to_i # ADDRID:128
+      #clock      = header[ 50,  8].unpack("H*")[0].hex.to_i # CLOCK:64
+      timestamp  = header[ 58,  6].unpack("B42")[0]         # TIMESTAMP:42
+      c_size     = header[118,  4].unpack("H*")[0].hex.to_i # CHUNK_SIZE:32
+      c_num      = header[122,  3].unpack("H*")[0].hex.to_i # CHUNK_NUM:24
+      del        = header[ 63    ].unpack("B3")[0]
+
+      year   = timestamp[ 0, 12].to_i(2) # YEAR:12
+      month  = timestamp[12,  6].to_i(2) # MONTH:6
+      day    = timestamp[18,  6].to_i(2) # DAY:6
+      hour   = timestamp[24,  6].to_i(2) # HOUR:6
+      minute = timestamp[30,  6].to_i(2) # MINUTE:6
+      second = timestamp[36,  6].to_i(2) # SECOND:6
+
+      if del[2] == "1" then
+        del_str = "*"
+      else
+        del_str = " "
+      end
+
+      key = io.read(ksize)
+      if c_num >= 1 || md5 == 281949768489412648962353822266799178366 then
+        dsize = 0
+      end
+      begin
+        if dsize > 10485760 then
+          raise "The dsize is too large"
+        end
+        body = io.read(dsize)
+        ret_md5 = Digest::MD5.hexdigest(body).hex.to_i
+  
+        if (md5 == ret_md5 || md5 == 281949768489412648962353822266799178366) && (io.read(8) == "\0\0\0\0\0\0\0\0") then
+          if err == 1 then
+            op.write_line("[RECOVERD] offset: #{prev_offset.to_s} count: #{count.to_s}\n")
+          end
+          err = 0
+          prev_offset = io.pos
+          if $key_list_flg then
+            if key + "\n" != "\n" then
+              op.write_line(sprintf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second) + "\t#{del_str}\t#{prev_offset}\t#{dsize / 1024}KB")
+              key_arr = key.split("\n")
+              key_arr.length.times{|i|
+                op.write_line("\t#{key_arr[i]}")
+              }
+              op.write_line("\n")
+            else
+              op.write_line("[ERROR] Key is not exists. #{offset}\n")
+            end
+          end
+          count += 1
+        else
+          raise "The data block is broken"
+        end
+      rescue
+        if err == 0 then
+          p $!
+          op.write_line("[ERROR] offset: #{prev_offset.to_s} count: #{count.to_s}\n")
+          err_count += 1
+        end
+        if (prev_offset % 1000) == 0 then
+            puts "Now skipping error blocks Offset: #{prev_offset.to_s}\n"
+        end
+        prev_offset += 1
+        io.seek(prev_offset, IO::SEEK_SET)
+        err = 1
+      end
+    end
+    io.close
+    op.close_file
+    puts "Error: #{err_count}\n"
+  end
+end
 
 t = Time.now
-fmt_t = Time.now.strftime("%Y%m%d%H%M%S")
 
 $save_fn = $stdout
-$log_fn = 'listup_avs_' + fmt_t + ".log"
-$size = 5767168
+$key_list_flg = false
 o = OptionParser.new
-o.banner = "Usage : #{__FILE__} [avs_file] [-s ] [-o output_file] [-l log_file]"
+o.banner = "Usage : #{__FILE__} [avs_file] [-o output_file] [-l]"
 o.on('-o output_file', '[output file name]', '(default=STDOUT)') {|v| $save_fn = v }
-o.on('-l log_file', '[log file name]', '(default=./listup_avs_YMDHMS.log)') {|v| $log_fn = v}
-o.on('-s max_size', '[file max size]', '(default=5767168)') {|v| $size = v}
+o.on('-l', '[key list]') {$key_list_flg = true}
 begin
   o.parse!
 rescue
@@ -28,98 +143,12 @@ if ARGV.length == 0 then
   exit 1
 end
 
-log = Logger.new($log_fn)
-
-prev_offset = 0
-count = 0
-err = 0
-
-if $save_fn == $stdout then
-  op = $stdout
-else
-  op = File.open($save_fn, "w")
+print "Start: "
+p t
+ARGV.length.times do |i|
+    FileReader.new(ARGV[i])
 end
-io = File.open(ARGV[0], "rb")
-
-op.write("Start: " + t.strftime("%Y-%m-%d %H:%M:%S") + "\n")
-
-# CHKSUM:128,KSIZE:16,BLEN_MSIZE:32,DSIZE:32,OFFSET:64,ADDRID:128,CLOCK:64,TIMESTAMP:42,DEL:1,BUF:437,CHUNK_SIZE:32,CHUNK_NUM:24,CHUNK_INDEX:24
-# KEY/binary,DATA/binary
-# PADDING:64
-skip = io.read(194) # Skip Header
-
-while ! io.eof? do
-  header = io.read(128)
-  md5 = header[0, 16].unpack("H*")[0] # CHKSUM:128
-  ksize = header[16, 2].unpack("H*")[0].hex.to_i # KSIZE:16
-  dsize = header[18, 4].unpack("H*")[0].hex.to_i # DSIZE:32
-  #blen_msize = header[22, 4].unpack("H*")[0].hex.to_i # BLEN_MSIZE:32
-  offset = header[26, 8].unpack("H*")[0].hex.to_i # OFFSET:64
-  #addrid = header[34, 16].unpack("H*")[0].hex.to_i # ADDRID:128
-  #clock = header[50, 8].unpack("H*")[0].hex.to_i # CLOCK:64
-  timestamp = header[58, 6].unpack("B42")[0] # TIMESTAMP:42
-  year = timestamp[0, 12].to_i(2) # YEAR:12
-  month = timestamp[12,  6].to_i(2) # MONTH:6
-  day = timestamp[18,  6].to_i(2) # DAY:6
-  hour = timestamp[24,  6].to_i(2) # HOUR:6
-  minute = timestamp[30,  6].to_i(2) # MINUTE:6
-  second = timestamp[36,  6].to_i(2) # SECOND:6
-
-  #del = (header[63].unpack("H*")[0].hex.to_i & 0x20) >> 5
-  del = header[63].unpack("B3")[0] 
-  if del[2] == "1" then
-    del_str = "*"
-  else
-    del_str = " "
-  end
-  key = io.read(ksize)
-  if dsize <= $size then
-    body = io.read(dsize)
-    ret_md5 = Digest::MD5.hexdigest(body)
-  else
-    body = ""
-    ret_md5 = ""
-    prev_offset -= 7
-  end
-
-  if (md5 == ret_md5) && (io.read(8) == "\0\0\0\0\0\0\0\0") then
-    err = 0
-    prev_offset = io.pos
-    if key + "\n" != "\n" then
-      op.write(sprintf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second))
-      key_arr = key.split("\n")
-      op.write("#{del_str} #{key_arr[0]}")
-      for i in 1..key_arr.length - 1
-        op.write(" #{key_arr[i]}")
-      end
-      op.write("\n")
-    else
-      log.error("key is not exists. #{offset}")
-    end
-    count += 1
-    log.info("#{prev_offset} #{key}")
-  else
-    io.seek(prev_offset, IO::SEEK_SET)
-    if err == 0 then
-      log.error("Error File: #{key}")
-    end
-    while io.read(8) != "\0\0\0\0\0\0\0\0" do
-      io.seek(prev_offset, IO::SEEK_SET)
-      prev_offset += 1
-    end
-    prev_offset = io.pos
-    if err == 0 then
-      log.error("#{prev_offset} src_md5: #{md5} dst_md5: #{ret_md5}")
-    end
-    err = 1
-  end
-end
-
 print "End  : "
 p Time.now
-puts "Total: " + count.to_s + " Offset: " + prev_offset.to_s
-
-io.close
-op.close
 
 exit 0
