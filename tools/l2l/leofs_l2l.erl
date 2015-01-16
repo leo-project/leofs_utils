@@ -110,11 +110,12 @@ run(RawArgs) ->
                         Count
                 end
         end,
-        Total = eleveldb:fold(SrcHandler, Fun, 0, []),
-        io:format(user, "[info]# of records in src leveldb:~p~n", [Total]),
+        SrcTotal = eleveldb:fold(SrcHandler, Fun, 0, []),
+        io:format(user, "[info]# of records in src leveldb:~p~n", [SrcTotal]),
         %% confirm records in leveldb
         {ok, Itr} = eleveldb:iterator(DstHandler, []),
-        fold_loop(eleveldb:iterator_move(Itr, <<>>), Itr),
+        DstTotal = fold_loop(eleveldb:iterator_move(Itr, <<>>), Itr, 0),
+        io:format(user, "[info]# of records in dst leveldb:~p~n", [DstTotal]),
         eleveldb:iterator_close(Itr)
     catch
         _Class:Error ->
@@ -125,13 +126,13 @@ run(RawArgs) ->
     end,
     ok.
 
-fold_loop({ok, K, V}, Itr) ->
-    Term = binary_to_term(V),
-    io:format(user, "[debug]iterate:leveldb key:~p value:~p~n", [K, Term]),
-    fold_loop(eleveldb:iterator_move(Itr, next), Itr);
-fold_loop({error, _Cause},_Itr) ->
+fold_loop({ok, _K, V}, Itr, Total) ->
+    _Term = binary_to_term(V),
+    %&io:format(user, "[debug]iterate:leveldb key:~p value:~p~n", [K, Term]),
+    fold_loop(eleveldb:iterator_move(Itr, next), Itr, Total + 1);
+fold_loop({error, _Cause}, _Itr, Total) ->
     %% Reach EOF
-    ok.
+    Total.
 
 %% @doc Retrieve the version
 %% @private
