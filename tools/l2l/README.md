@@ -26,11 +26,11 @@ Usage
 $ ./leofs_l2l.erl -h
 Usage: leofs_l2l.erl [-h] [-s <src_dir>] [-d <dst_dir>] [-v]
 
-  -h, --help            Show the program options
-  -s, --bitcask_dir     Specify a bitcask directory to be converted
-  -d, --leveldb_dir     Specify a leveldb directory to be outputed
-  -v, --version         Show version information
+  -h, --help    Show the program options
+  -s, --src_dir Specify a leveldb source directory
+  -d, --dst_dir Specify a leveldb destination directory
+  -v, --version Show version information
 
 ### example
-$ ./leofs_l2l -b leveldb_src_dir -l leveldb_dst_dir
+$ ./leofs_l2l -s leveldb_src_dir -d leveldb_dst_dir
 ```
